@@ -14,13 +14,8 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 5000;
 
-// CORS - Allow all origins for development
-app.use(cors({
-  origin: '*',
-  credentials: false,
-  methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization'],
-}));
+// CORS - Allow all origins
+app.use(cors());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
