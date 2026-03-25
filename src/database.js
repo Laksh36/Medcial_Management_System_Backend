@@ -6,33 +6,55 @@ let pool;
 async function getPool() {
   if (!pool) {
     pool = mysql.createPool({
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'medical_manager',
+      // Railway ke variable names bhi support karta hai (MYSQLHOST, MYSQLUSER etc.)
+      // aur custom names bhi (DB_HOST, DB_USER etc.)
+      host:     process.env.DB_HOST     || process.env.MYSQLHOST     || 'localhost',
+      port:     process.env.DB_PORT     || process.env.MYSQLPORT     || 3306,
+      user:     process.env.DB_USER     || process.env.MYSQLUSER     || 'root',
+      password: process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || '',
+      database: process.env.DB_NAME     || process.env.MYSQLDATABASE || 'medical_manager',
       waitForConnections: true,
       connectionLimit: 10,
+      connectTimeout: 30000,
+      acquireTimeout: 30000,
+      // SSL for Railway
+      ssl: process.env.DB_HOST?.includes('railway') || process.env.MYSQLHOST?.includes('railway')
+        ? { rejectUnauthorized: false }
+        : false,
     });
   }
   return pool;
 }
 
 async function initializeDatabase() {
-  const tempPool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 3306,
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    waitForConnections: true,
-    connectionLimit: 2,
-  });
-  await tempPool.query(`CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'medical_manager'}\``);
-  await tempPool.end();
+  const host     = process.env.DB_HOST     || process.env.MYSQLHOST     || 'localhost';
+  const port     = process.env.DB_PORT     || process.env.MYSQLPORT     || 3306;
+  const user     = process.env.DB_USER     || process.env.MYSQLUSER     || 'root';
+  const password = process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || '';
+  const dbName   = process.env.DB_NAME     || process.env.MYSQLDATABASE || 'medical_manager';
+
+  console.log(`🔌 Connecting to MySQL: ${user}@${host}:${port}/${dbName}`);
+
+  // Pehle database create karo (agar exist nahi karta)
+  try {
+    const tempPool = mysql.createPool({
+      host, port, user, password,
+      waitForConnections: true,
+      connectionLimit: 2,
+      connectTimeout: 30000,
+      ssl: host.includes('railway') ? { rejectUnauthorized: false } : false,
+    });
+    await tempPool.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+    await tempPool.end();
+  } catch (e) {
+    // Railway MySQL me database already exist karta hai 'railway' naam se
+    // CREATE DATABASE fail ho sakta hai — ignore karo
+    console.log('ℹ️  DB create skip (already exists):', e.message);
+  }
 
   const db = await getPool();
 
-  // ─── USERS (Admin, Worker, Field Worker) ────────────────────────────────────
+  // ─── USERS ──────────────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -45,7 +67,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // ─── DEPARTMENTS (Production departments e.g. Assembly, Sterilization etc.) ──
+  // ─── DEPARTMENTS ────────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS departments (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) UNIQUE NOT NULL,
@@ -56,7 +78,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // ─── WORKER <-> DEPARTMENT mapping ──────────────────────────────────────────
+  // ─── WORKER <-> DEPARTMENT ──────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS worker_departments (
     id INT AUTO_INCREMENT PRIMARY KEY,
     worker_id INT NOT NULL,
@@ -66,7 +88,7 @@ async function initializeDatabase() {
     FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE CASCADE
   )`);
 
-  // ─── PRODUCT CATEGORIES (Medical devices, implants etc.) ────────────────────
+  // ─── PRODUCT CATEGORIES ─────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS product_categories (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -75,7 +97,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // ─── PRODUCTION ORDERS (like Projects in furniture system) ──────────────────
+  // ─── PRODUCTION ORDERS ──────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS production_orders (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_no VARCHAR(50) UNIQUE NOT NULL,
@@ -97,7 +119,7 @@ async function initializeDatabase() {
     FOREIGN KEY (category_id) REFERENCES product_categories(id) ON DELETE SET NULL
   )`);
 
-  // ─── PRODUCTION ITEMS (sub-products / components) ───────────────────────────
+  // ─── PRODUCTION ITEMS ───────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS production_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
@@ -113,7 +135,7 @@ async function initializeDatabase() {
     FOREIGN KEY (order_id) REFERENCES production_orders(id) ON DELETE CASCADE
   )`);
 
-  // ─── PRODUCTION CHAIN (department-wise stage sequence) ──────────────────────
+  // ─── PRODUCTION CHAINS ──────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS production_chains (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
@@ -127,7 +149,7 @@ async function initializeDatabase() {
     FOREIGN KEY (department_id) REFERENCES departments(id)
   )`);
 
-  // ─── TASK ASSIGNMENTS (production tasks per department/worker) ───────────────
+  // ─── TASK ASSIGNMENTS ───────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS task_assignments (
     id INT AUTO_INCREMENT PRIMARY KEY,
     order_id INT NOT NULL,
@@ -155,7 +177,7 @@ async function initializeDatabase() {
     FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL
   )`);
 
-  // ─── WORKER TIME LOGS ────────────────────────────────────────────────────────
+  // ─── WORKER TIME LOGS ───────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS worker_time_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id INT NOT NULL,
@@ -169,7 +191,7 @@ async function initializeDatabase() {
     FOREIGN KEY (worker_id) REFERENCES users(id)
   )`);
 
-  // ─── DAILY PROGRESS ──────────────────────────────────────────────────────────
+  // ─── DAILY PROGRESS ─────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS daily_progress (
     id INT AUTO_INCREMENT PRIMARY KEY,
     task_id INT NOT NULL,
@@ -188,11 +210,7 @@ async function initializeDatabase() {
     FOREIGN KEY (created_by) REFERENCES users(id)
   )`);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FIELD WORKER / DOCTOR VISIT TRACKING
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // ─── AREAS (City zones / territories) ────────────────────────────────────────
+  // ─── AREAS ──────────────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS areas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -203,7 +221,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // ─── DOCTORS ──────────────────────────────────────────────────────────────────
+  // ─── DOCTORS ────────────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS doctors (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -221,7 +239,7 @@ async function initializeDatabase() {
     FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE SET NULL
   )`);
 
-  // ─── FIELD WORKER <-> AREA mapping ───────────────────────────────────────────
+  // ─── FIELD WORKER <-> AREA ──────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS field_worker_areas (
     id INT AUTO_INCREMENT PRIMARY KEY,
     worker_id INT NOT NULL,
@@ -231,7 +249,7 @@ async function initializeDatabase() {
     FOREIGN KEY (area_id) REFERENCES areas(id) ON DELETE CASCADE
   )`);
 
-  // ─── VISIT PLANS (Admin assigns doctors to field worker) ─────────────────────
+  // ─── VISIT PLANS ────────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS visit_plans (
     id INT AUTO_INCREMENT PRIMARY KEY,
     worker_id INT NOT NULL,
@@ -248,7 +266,7 @@ async function initializeDatabase() {
     FOREIGN KEY (created_by) REFERENCES users(id)
   )`);
 
-  // ─── FIELD SESSIONS (when worker leaves / returns office) ────────────────────
+  // ─── FIELD SESSIONS ─────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS field_sessions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     worker_id INT NOT NULL,
@@ -266,7 +284,7 @@ async function initializeDatabase() {
     FOREIGN KEY (worker_id) REFERENCES users(id)
   )`);
 
-  // ─── DOCTOR VISITS (actual visits during a session) ──────────────────────────
+  // ─── DOCTOR VISITS ──────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS doctor_visits (
     id INT AUTO_INCREMENT PRIMARY KEY,
     session_id INT NOT NULL,
@@ -291,7 +309,7 @@ async function initializeDatabase() {
     FOREIGN KEY (visit_plan_id) REFERENCES visit_plans(id) ON DELETE SET NULL
   )`);
 
-  // ─── LOCATION TRACKING (GPS pings during field session) ──────────────────────
+  // ─── LOCATION PINGS ─────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS location_pings (
     id INT AUTO_INCREMENT PRIMARY KEY,
     session_id INT NOT NULL,
@@ -307,7 +325,7 @@ async function initializeDatabase() {
     FOREIGN KEY (worker_id) REFERENCES users(id)
   )`);
 
-  // ─── SAMPLES / PRODUCTS catalog ──────────────────────────────────────────────
+  // ─── SAMPLE PRODUCTS ────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS sample_products (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -317,7 +335,7 @@ async function initializeDatabase() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-  // ─── APP SETTINGS ─────────────────────────────────────────────────────────────
+  // ─── APP SETTINGS ───────────────────────────────────────────────────────────
   await db.query(`CREATE TABLE IF NOT EXISTS app_settings (
     id INT AUTO_INCREMENT PRIMARY KEY,
     setting_key VARCHAR(100) UNIQUE NOT NULL,
@@ -326,7 +344,10 @@ async function initializeDatabase() {
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`);
 
+  // ─── SEED DATA ──────────────────────────────────────────────────────────────
   const bcrypt = require('bcryptjs');
+
+  // Default settings
   const defaultSettings = [
     ['currency_symbol', '₹'],
     ['currency_name', 'INR'],
@@ -339,14 +360,14 @@ async function initializeDatabase() {
     await db.query('INSERT IGNORE INTO app_settings (setting_key, setting_value) VALUES (?,?)', [k, v]);
   }
 
-  // Seed admin user
+  // Admin user
   const adminPass = bcrypt.hashSync('admin123', 10);
   await db.query(
     `INSERT IGNORE INTO users (name, username, password, role) VALUES (?,?,?,?)`,
     ['Admin', 'admin', adminPass, 'admin']
   );
 
-  // Seed demo departments
+  // Demo departments
   const depts = [
     ['Raw Material Intake', 'Incoming raw material verification', '#EF4444', 1],
     ['Machining', 'CNC & precision machining', '#F97316', 2],
@@ -362,7 +383,7 @@ async function initializeDatabase() {
     );
   }
 
-  // Seed demo areas
+  // Demo areas
   const areas = [
     ['North Zone', 'Jaipur', 'Rajasthan'],
     ['South Zone', 'Jaipur', 'Rajasthan'],
