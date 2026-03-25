@@ -16,7 +16,6 @@ async function getPool() {
       waitForConnections: true,
       connectionLimit: 10,
       connectTimeout: 30000,
-      acquireTimeout: 30000,
       // SSL for Railway
       ssl: process.env.DB_HOST?.includes('railway') || process.env.MYSQLHOST?.includes('railway')
         ? { rejectUnauthorized: false }
